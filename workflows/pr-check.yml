@@ -1,0 +1,107 @@
+name: Pull Request Checks
+
+on:
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  validate-branch:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      
+      - name: Validate branch name
+        run: |
+          BRANCH_NAME="${{ github.head_ref }}"
+          if [[ ! $BRANCH_NAME =~ ^(feature|bugfix|hotfix|refactor|docs|chore)/ ]]; then
+            echo "❌ Branch name should start with: feature/, bugfix/, hotfix/, refactor/, docs/, or chore/"
+            echo "Current branch: $BRANCH_NAME"
+            exit 1
+          fi
+          echo "✅ Branch name is valid: $BRANCH_NAME"
+
+  commit-lint:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      
+      - name: Validate commits
+        run: |
+          echo "Checking commit messages..."
+          # Obtener commits en el PR
+          COMMITS=$(git log origin/${{ github.base_ref }}..HEAD --format='%s')
+          
+          while IFS= read -r commit; do
+            if [[ ! $commit =~ ^(feat|fix|refactor|style|test|docs|chore): ]]; then
+              echo "❌ Invalid commit message: $commit"
+              echo "Should start with: feat:, fix:, refactor:, style:, test:, docs:, or chore:"
+              exit 1
+            fi
+          done <<< "$COMMITS"
+          
+          echo "✅ All commit messages are valid"
+        continue-on-error: true
+
+  code-quality:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18.x'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Check for console.log statements
+        run: |
+          if grep -r "console\." src/ --include="*.js" --exclude-dir=node_modules | grep -v "console.error\|console.warn"; then
+            echo "⚠️  Found console.log statements - consider removing for production"
+          fi
+        continue-on-error: true
+      
+      - name: Check for TODOs
+        run: |
+          TODO_COUNT=$(grep -r "TODO\|FIXME" src/ --include="*.js" | wc -l)
+          if [ $TODO_COUNT -gt 0 ]; then
+            echo "⚠️  Found $TODO_COUNT TODO/FIXME comments"
+          fi
+        continue-on-error: true
+
+  file-changes:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      
+      - name: Check for .env.local changes
+        run: |
+          if git diff origin/${{ github.base_ref }}...HEAD --name-only | grep -q "\.env\.local"; then
+            echo "❌ ERROR: .env.local was modified!"
+            echo ".env.local should NEVER be committed"
+            exit 1
+          fi
+          echo "✅ .env.local not modified"
+      
+      - name: Check for node_modules changes
+        run: |
+          if git diff origin/${{ github.base_ref }}...HEAD --name-only | grep -q "node_modules/"; then
+            echo "⚠️  WARNING: node_modules was modified (should only modify package.json)"
+          fi
+        continue-on-error: true
